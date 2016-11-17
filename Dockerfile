@@ -1,10 +1,9 @@
-FROM readytalk/nodejs
+FROM mhart/alpine-node:6
 MAINTAINER bowwow <bowwow@gmail.com>
 
-WORKDIR /app
-ADD tracker/package.json /app/
+WORKDIR /src
+ADD tracker/package.json /src/
 RUN npm install
-ADD tracker /app
-
-CMD []
-ENTRYPOINT ["/nodejs/bin/node", "bin/cmd.js"]
+ADD tracker /src
+EXPOSE 8000
+CMD ["node", "bin/cmd.js"]
