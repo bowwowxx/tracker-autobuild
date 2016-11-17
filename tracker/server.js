@@ -18,6 +18,16 @@ var parseHttpRequest = require('./lib/server/parse-http')
 var parseUdpRequest = require('./lib/server/parse-udp')
 var parseWebSocketRequest = require('./lib/server/parse-websocket')
 
+var levelup = require('levelup')
+var jsondiffpatch = require('jsondiffpatch')
+
+var db = levelup('./infodb')
+var diffpatcher = jsondiffpatch.create({
+  objectHash: function (obj) {
+    return obj.name
+  }
+})
+
 inherits(Server, EventEmitter)
 
 /**
@@ -63,6 +73,115 @@ function Server (opts) {
   self.udp4 = null
   self.udp6 = null
   self.ws = null
+
+  self.db = db
+  self.announceInfo = {items: []}
+  self.infoHashes = []
+
+  setInterval(() => handleUpdateAnnounceInfo(), 20000)
+
+  function getAnnounceInfo () {
+    return self.announceInfo
+  }
+
+  function setAnnounceInfo (info) {
+    self.announceInfo = {items: info}
+  }
+
+  function setInfoHashes (infoHashes) {
+    self.infoHashes = infoHashes
+  }
+
+  function getInfoHashes () {
+    var infoHashes = Object.keys(self.torrents)
+    var activeInfoHash = []
+    infoHashes.forEach(function (infoHash) {
+      var peers = self.torrents[infoHash].peers
+      var keys = peers.keys
+      if (keys.length > 0) activeInfoHash.push(infoHash)
+    })
+
+    return activeInfoHash
+  }
+
+  function handleUpdateAnnounceInfo () {
+    console.log('---', new Date(), 'handleUpdateAnnounceInfo::start ---')
+    var activeInfoHash = getInfoHashes()
+
+    console.log('handleUpdateAnnounceInfo::self.infoHashes', self.infoHashes)
+    console.log('handleUpdateAnnounceInfo::activeInfoHash', activeInfoHash)
+
+    var delta = diffpatcher.diff(self.infoHashes, activeInfoHash)
+    console.log('---------------------------------------')
+    console.log('handleUpdateAnnounceInfo::delta')
+    console.log(delta)
+    console.log('---------------------------------------')
+    if (delta === undefined) return
+
+    var validInfoHash = []
+    var activeInfo = []
+
+    var len = activeInfoHash.length
+    activeInfoHash.forEach((infoHash) => {
+      db.get(`infohashes.id.${infoHash}`, (err, value) => {
+        if (err) {
+          --len
+          return console.log('Ooops!', err)
+        }
+
+        db.get(`infohashes.id.${infoHash}.info`, (err, value) => {
+          if (err) {
+            --len
+            return console.log('Ooops!', err)
+          }
+
+          validInfoHash.push(infoHash)
+          activeInfo.push(JSON.parse(value))
+
+          if (--len === 0) {
+            console.log('handleUpdateAnnounceInfo::validInfoHash', validInfoHash)
+            console.log('handleUpdateAnnounceInfo::activeInfo', activeInfo)
+            console.log('---------------------------------------')
+            setInfoHashes(validInfoHash)
+            setAnnounceInfo(activeInfo)
+          }
+        })
+      })
+    })
+  }
+
+  function handleNewAnnounceInfo (body) {
+    try {
+      var info = JSON.parse(body)
+    } catch (e) {
+      return console.log(e)
+    }
+    if (info.items === undefined) return
+
+    info.items.forEach((e) => {
+      if (!e.infoHash) return
+
+      db.get(`infohashes.id.${e.infoHash}`, (err, value) => {
+        if (err) console.log('Ooops!', err)
+        if (value) return console.log(`Ooops! infohashes.id.${e.infoHash} existed!!`)
+
+        db.put(`infohashes.id.${e.infoHash}`, e.infoHash, (err) => {
+          if (err) return console.log('Ooops!', err)
+          console.log(`handleNewAnnounceInfo::update::success infohashes.id.${e.infoHash}`)
+
+          db.put(`infohashes.id.${e.infoHash}.info`, JSON.stringify(e), (err) => {
+            if (err) {
+              db.del(`infohashes.id.${e.infoHash}`, (err) => {
+                if (err) console.log('Ooops!', err)
+              })
+              return console.log('Ooops!', err)
+            }
+            console.log(`handleNewAnnounceInfo::update::success infohashes.id.${e.infoHash}.info`)
+          })
+        })
+      })
+    })
+  }
 
   // start an http tracker unless the user explictly says no
   if (opts.http !== false) {
@@ -189,6 +308,33 @@ function Server (opts) {
         }
         html += '</ul>'
         return html
+      }
+
+      if (req.method === 'GET' && req.url === '/favicon.ico') {
+        res.write('')
+        res.end()
+      }
+
+      if (req.method === 'GET' && (req.url === '/list' || req.url === '/list.json')) {
+        res.write(JSON.stringify({items: getInfoHashes()}))
+        res.end()
+      }
+
+      if (req.method === 'GET' && (req.url === '/list/info' || req.url === '/list/info.json')) {
+        res.write(JSON.stringify(getAnnounceInfo()))
+        res.end()
+      }
+
+      if (req.method === 'POST' && (req.url === '/info')) {
+        var body = ''
+        req.on('data', (data) => {
+          body += data
+        })
+        req.on('end', () => {
+          handleNewAnnounceInfo(body)
+        })
+        res.write('')
+        res.end()
       }
 
       if (req.method === 'GET' && (req.url === '/stats' || req.url === '/stats.json')) {

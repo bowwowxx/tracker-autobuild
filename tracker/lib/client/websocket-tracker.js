@@ -2,9 +2,9 @@ module.exports = WebSocketTracker
 
 var debug = require('debug')('bittorrent-tracker:websocket-tracker')
 var extend = require('xtend')
-var hat = require('hat')
 var inherits = require('inherits')
 var Peer = require('simple-peer')
+var randombytes = require('randombytes')
 var Socket = require('simple-websocket')
 
 var common = require('../common')
@@ -169,12 +169,12 @@ WebSocketTracker.prototype._openSocket = function () {
   } else {
     self.socket = socketPool[self.announceUrl] = new Socket(self.announceUrl)
     self.socket.consumers = 1
-    self.socket.on('connect', self._onSocketConnectBound)
+    self.socket.once('connect', self._onSocketConnectBound)
   }
 
   self.socket.on('data', self._onSocketDataBound)
-  self.socket.on('close', self._onSocketCloseBound)
-  self.socket.on('error', self._onSocketErrorBound)
+  self.socket.once('close', self._onSocketCloseBound)
+  self.socket.once('error', self._onSocketErrorBound)
 }
 
 WebSocketTracker.prototype._onSocketConnect = function () {
@@ -369,7 +369,7 @@ WebSocketTracker.prototype._generateOffers = function (numwant, cb) {
   checkDone()
 
   function generateOffer () {
-    var offerId = hat(160)
+    var offerId = randombytes(20).toString('hex')
     debug('creating peer (from _generateOffers)')
     var peer = self.peers[offerId] = new Peer({
       initiator: true,

@@ -1,0 +1,6 @@
+infodb/
+node_modules/
+
+yarn.lock
+
+tracker.log
